@@ -1,3 +1,4 @@
+
 import os
 import json
 import sqlite3
@@ -15,9 +16,21 @@ DB_PATH = BASE_DIR / "content.db"
 
 app = FastAPI(title="AI Content Assistant")
 
+# Allow the Vite frontend ports used during local development.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:5175",
+        "http://localhost:5176",
+        "http://localhost:5177",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+        "http://127.0.0.1:5175",
+        "http://127.0.0.1:5176",
+        "http://127.0.0.1:5177",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -51,6 +64,11 @@ def startup():
     init_db()
 
 
+@app.get("/")
+def root():
+    return {"message": "AI Content Assistant API is running"}
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -58,9 +76,9 @@ def health():
 
 @app.post("/entries")
 def create_entry(request: ContentRequest):
-    demo_mode = os.getenv("DEMO_MODE", "false").lower() == "true"
+    demo_mode = os.getenv("DEMO_MODE", "false").strip().lower() == "true"
 
-    # Free demo mode: does not call the external AI API.
+    # Free demo mode: does not call OpenAI.
     if demo_mode:
         words = request.text.strip().split()
         summary_text = " ".join(words[:35])
@@ -97,11 +115,12 @@ def create_entry(request: ContentRequest):
             )
 
     # Normal AI mode.
-    api_key = os.getenv("OPENAI_API_KEY")
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+
     if not api_key:
         raise HTTPException(
             status_code=503,
-            detail="AI service is not configured. Set OPENAI_API_KEY.",
+            detail="AI service is not configured. Enable DEMO_MODE=true for free local testing.",
         )
 
     try:
