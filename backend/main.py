@@ -1,4 +1,3 @@
-
 import os
 import json
 import sqlite3
@@ -23,15 +22,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 class ContentRequest(BaseModel):
     text: str = Field(min_length=10, max_length=10000)
+
 
 def get_connection():
     return sqlite3.connect(DB_PATH)
 
+
 def init_db():
     with get_connection() as conn:
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS entries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 original_text TEXT NOT NULL,
@@ -39,23 +42,66 @@ def init_db():
                 tags TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+            """
+        )
+
 
 @app.on_event("startup")
 def startup():
     init_db()
 
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
+
 @app.post("/entries")
 def create_entry(request: ContentRequest):
+    demo_mode = os.getenv("DEMO_MODE", "false").lower() == "true"
+
+    # Free demo mode: does not call the external AI API.
+    if demo_mode:
+        words = request.text.strip().split()
+        summary_text = " ".join(words[:35])
+
+        if len(words) > 35:
+            summary_text += "..."
+
+        summary = f"Demo summary (not AI-generated): {summary_text}"
+        tags = ["Demo Mode", "Content Summary", "Local Preview"]
+
+        try:
+            with get_connection() as conn:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO entries (original_text, summary, tags)
+                    VALUES (?, ?, ?)
+                    """,
+                    (request.text, summary, json.dumps(tags)),
+                )
+                entry_id = cursor.lastrowid
+
+            return {
+                "id": entry_id,
+                "original_text": request.text,
+                "summary": summary,
+                "tags": tags,
+                "demo_mode": True,
+            }
+        except sqlite3.Error as exc:
+            print(f"Database save failed: {exc}")
+            raise HTTPException(
+                status_code=500,
+                detail="Could not save demo content.",
+            )
+
+    # Normal AI mode.
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise HTTPException(
             status_code=503,
-            detail="AI service is not configured. Set OPENAI_API_KEY."
+            detail="AI service is not configured. Set OPENAI_API_KEY.",
         )
 
     try:
@@ -94,13 +140,16 @@ def create_entry(request: ContentRequest):
         print(f"AI processing failed: {exc}")
         raise HTTPException(
             status_code=502,
-            detail="AI processing failed. Please try again."
+            detail="AI processing failed. Please try again.",
         )
 
     try:
         with get_connection() as conn:
             cursor = conn.execute(
-                "INSERT INTO entries (original_text, summary, tags) VALUES (?, ?, ?)",
+                """
+                INSERT INTO entries (original_text, summary, tags)
+                VALUES (?, ?, ?)
+                """,
                 (request.text, summary.strip(), json.dumps(tags)),
             )
             entry_id = cursor.lastrowid
@@ -111,15 +160,23 @@ def create_entry(request: ContentRequest):
             "summary": summary.strip(),
             "tags": tags,
         }
-    except sqlite3.Error:
-        raise HTTPException(status_code=500, detail="Could not save content.")
+    except sqlite3.Error as exc:
+        print(f"Database save failed: {exc}")
+        raise HTTPException(
+            status_code=500,
+            detail="Could not save content.",
+        )
+
 
 @app.get("/entries")
 def list_entries():
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT id, original_text, summary, tags, created_at "
-            "FROM entries ORDER BY id DESC"
+            """
+            SELECT id, original_text, summary, tags, created_at
+            FROM entries
+            ORDER BY id DESC
+            """
         ).fetchall()
 
     return [
@@ -133,17 +190,24 @@ def list_entries():
         for row in rows
     ]
 
+
 @app.get("/entries/{entry_id}")
 def get_entry(entry_id: int):
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT id, original_text, summary, tags, created_at "
-            "FROM entries WHERE id = ?",
+            """
+            SELECT id, original_text, summary, tags, created_at
+            FROM entries
+            WHERE id = ?
+            """,
             (entry_id,),
         ).fetchone()
 
     if row is None:
-        raise HTTPException(status_code=404, detail="Entry not found.")
+        raise HTTPException(
+            status_code=404,
+            detail="Entry not found.",
+        )
 
     return {
         "id": row[0],
